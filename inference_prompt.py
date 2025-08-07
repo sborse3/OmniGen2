@@ -188,6 +188,12 @@ def main():
             output_hidden_states=False,
         ).last_hidden_state
 
+    # Update text_mask to match new sequence length (prefix + text)
+    batch_size = text_mask.shape[0]
+    num_prefix_tokens = config.train.get('num_prefix_tokens', 10)
+    prefix_mask = torch.ones(batch_size, num_prefix_tokens, device=text_mask.device, dtype=text_mask.dtype)
+    text_mask_with_prefix = torch.cat([prefix_mask, text_mask], dim=1)
+
     # Generate rotary embeddings for the new sequence length (prefix + text)
     total_seq_len = text_feats.shape[1]  # This now includes prefix tokens
     freqs_cis = OmniGen2RotaryPosEmbed.get_freqs_cis(
@@ -217,7 +223,7 @@ def main():
             # Prepare model inputs
             model_kwargs = dict(
                 text_hidden_states=text_feats,
-                text_attention_mask=text_mask,
+                text_attention_mask=text_mask_with_prefix,
                 ref_image_hidden_states=None,  # No reference images for now
                 freqs_cis=freqs_cis,
             )
@@ -234,7 +240,7 @@ def main():
                 # Unconditional prediction
                 uncond_model_kwargs = dict(
                     text_hidden_states=torch.zeros_like(text_feats),
-                    text_attention_mask=text_mask,
+                    text_attention_mask=text_mask_with_prefix,
                     ref_image_hidden_states=None,
                     freqs_cis=freqs_cis,
                 )
