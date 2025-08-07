@@ -30,62 +30,30 @@ class PrefixTokens(torch.nn.Module):
 
 
 class PrefixTextEncoder(torch.nn.Module):
-    """Wrapper around text encoder that adds trainable prefix tokens."""
-    
+    """Wrapper around text encoder that adds trainable prefix tokens to the output."""
     def __init__(self, text_encoder, num_prefix_tokens, dtype=torch.float32):
         super().__init__()
         self.text_encoder = text_encoder
         self.prefix_tokens = PrefixTokens(num_prefix_tokens, text_encoder.config.hidden_size, dtype)
-        
+
     def forward(self, input_ids, attention_mask, output_hidden_states=False):
         batch_size = input_ids.shape[0]
-        
-        # Get original text embeddings
-        text_embeddings = self.text_encoder.embeddings.word_embeddings(input_ids)
-        
-        # Add prefix embeddings
+        # Run the text encoder as usual
+        encoder_outputs = self.text_encoder(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=output_hidden_states
+        )
+        text_hidden_states = encoder_outputs.last_hidden_state
+        # Add prefix tokens to the output
         prefix_embeddings = self.prefix_tokens(batch_size)
-        combined_embeddings = torch.cat([prefix_embeddings, text_embeddings], dim=1)
-        
-        # Update attention mask to include prefix tokens
-        prefix_attention_mask = torch.ones(batch_size, self.prefix_tokens.num_prefix_tokens, 
-                                         device=attention_mask.device, dtype=attention_mask.dtype)
-        combined_attention_mask = torch.cat([prefix_attention_mask, attention_mask], dim=1)
-        
-        # Pass through the rest of the text encoder
-        # We need to bypass the embedding layer since we've already computed embeddings
-        hidden_states = combined_embeddings
-        
-        # Apply position embeddings
-        if hasattr(self.text_encoder.embeddings, 'position_embeddings'):
-            position_ids = torch.arange(combined_embeddings.size(1), device=combined_embeddings.device)
-            position_ids = position_ids.unsqueeze(0).expand(batch_size, -1)
-            position_embeddings = self.text_encoder.embeddings.position_embeddings(position_ids)
-            hidden_states = hidden_states + position_embeddings
-        
-        # Apply layer norm if present
-        if hasattr(self.text_encoder.embeddings, 'LayerNorm'):
-            hidden_states = self.text_encoder.embeddings.LayerNorm(hidden_states)
-        
-        # Pass through transformer layers
-        for layer in self.text_encoder.encoder.layers:
-            layer_outputs = layer(
-                hidden_states,
-                attention_mask=combined_attention_mask,
-                output_hidden_states=output_hidden_states
-            )
-            hidden_states = layer_outputs[0]
-        
-        # Apply final layer norm
-        if hasattr(self.text_encoder, 'final_layer_norm'):
-            hidden_states = self.text_encoder.final_layer_norm(hidden_states)
-        
-        # Return only the text portion (excluding prefix tokens)
-        text_hidden_states = hidden_states[:, self.prefix_tokens.num_prefix_tokens:, :]
-        
+        # Concatenate prefix tokens at the beginning of the sequence
+        combined_hidden_states = torch.cat([prefix_embeddings, text_hidden_states], dim=1)
+        # If output_hidden_states is requested, append to the list
+        hidden_states_list = [combined_hidden_states] if output_hidden_states else None
         return type('TextEncoderOutput', (), {
-            'last_hidden_state': text_hidden_states,
-            'hidden_states': [text_hidden_states] if output_hidden_states else None
+            'last_hidden_state': combined_hidden_states,
+            'hidden_states': hidden_states_list
         })()
 
 
@@ -219,6 +187,14 @@ def main():
             attention_mask=text_mask,
             output_hidden_states=False,
         ).last_hidden_state
+
+    # Generate rotary embeddings for the new sequence length (prefix + text)
+    total_seq_len = text_feats.shape[1]  # This now includes prefix tokens
+    freqs_cis = OmniGen2RotaryPosEmbed.get_freqs_cis(
+        model.config.axes_dim_rope,
+        [total_seq_len] * len(model.config.axes_dim_rope),
+        theta=10000,
+    )
     
     # Initialize latents
     batch_size = 1
