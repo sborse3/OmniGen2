@@ -203,13 +203,8 @@ def main():
     prefix_mask = torch.ones(batch_size, num_prefix_tokens, device=text_mask.device, dtype=text_mask.dtype)
     text_mask_with_prefix = torch.cat([prefix_mask, text_mask], dim=1)
 
-    # Generate rotary embeddings for the new sequence length (prefix + text)
-    total_seq_len = text_feats.shape[1]  # This now includes prefix tokens
-    freqs_cis = OmniGen2RotaryPosEmbed.get_freqs_cis(
-        model.config.axes_dim_rope,
-        [total_seq_len] * len(model.config.axes_dim_rope),
-        theta=10000,
-    )
+    # Use the original freqs_cis generation (model will handle sequence length internally)
+    # freqs_cis is already generated above with model.config.axes_lens
     
     # Initialize latents
     batch_size = 1
