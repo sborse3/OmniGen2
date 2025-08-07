@@ -75,7 +75,7 @@ class PrefixTextEncoder(nn.Module):
         super().__init__()
         self.text_encoder = text_encoder
         self.prefix_tokens = PrefixTokens(num_prefix_tokens, text_encoder.config.hidden_size, dtype)
-
+        
     def forward(self, input_ids, attention_mask, output_hidden_states=False):
         batch_size = input_ids.shape[0]
         # Run the text encoder as usual
@@ -85,10 +85,19 @@ class PrefixTextEncoder(nn.Module):
             output_hidden_states=output_hidden_states
         )
         text_hidden_states = encoder_outputs.last_hidden_state
+        
         # Add prefix tokens to the output
         prefix_embeddings = self.prefix_tokens(batch_size)
+        
+        # Ensure both tensors are on the same device and have the same dtype
+        prefix_embeddings = prefix_embeddings.to(device=text_hidden_states.device, dtype=text_hidden_states.dtype)
+        
         # Concatenate prefix tokens at the beginning of the sequence
         combined_hidden_states = torch.cat([prefix_embeddings, text_hidden_states], dim=1)
+        
+        # Ensure the concatenated tensor is contiguous
+        combined_hidden_states = combined_hidden_states.contiguous()
+        
         # If output_hidden_states is requested, append to the list
         hidden_states_list = [combined_hidden_states] if output_hidden_states else None
         return type('TextEncoderOutput', (), {
