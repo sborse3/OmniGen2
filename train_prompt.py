@@ -342,6 +342,7 @@ def main(args):
         )
 
     # default: 1000 steps, linear noise schedule
+    # NOTE: We'll generate rotary embeddings per batch below, after knowing the true sequence length
     transport = create_transport(
         "Linear",
         "velocity",
@@ -540,6 +541,14 @@ def main(args):
                         output_hidden_states=False,
                     ).last_hidden_state
 
+                # Generate rotary embeddings for the new sequence length (prefix + text)
+                total_seq_len = text_feats.shape[1]  # This now includes prefix tokens
+                freqs_cis = OmniGen2RotaryPosEmbed.get_freqs_cis(
+                    model.config.axes_dim_rope,
+                    [total_seq_len] * len(model.config.axes_dim_rope),
+                    theta=10000,
+                )
+                
                 @torch.no_grad()
                 def encode_vae(img):
                     z0 = vae.encode(img.to(dtype=vae.dtype)).latent_dist.sample()
